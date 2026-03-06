@@ -91,4 +91,10 @@ BONFERRONI_CORRECTION = True
 # Level 3: 5 top-level categories (Practical, Epistemic, Social, Protective, Personal)
 PRIMARY_ANALYSIS_LEVEL = 2
 SUMMARY_ANALYSIS_LEVEL = 3
-TOP_LEVEL_CATEGORIES = ["Practical", "Epistemic", "Social", "Protective", "Personal"]
+TOP_LEVEL_CATEGORIES = [
+    "Practical values",
+    "Epistemic values",
+    "Social values",
+    "Protective values",
+    "Personal values",
+]

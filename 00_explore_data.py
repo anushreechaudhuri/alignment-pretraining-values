@@ -66,9 +66,9 @@ def explore_values_taxonomy():
     print(f"\nValue frequencies dataset: {len(freq_df)} entries")
     print(f"Columns: {list(freq_df.columns)}")
     print(f"\nTop 10 most frequent values:")
-    top10 = freq_df.nlargest(10, "pct_total_occurrences")
+    top10 = freq_df.nlargest(10, "pct_convos")
     for _, row in top10.iterrows():
-        print(f"  {row.get('name', row.get('value', 'N/A'))}: {row['pct_total_occurrences']:.4f}")
+        print(f"  {row['value']}: {row['pct_convos']:.4f}")
 
     # Save samples
     tree_df.to_csv(OUTPUT_DIR / "taxonomy_tree_sample.csv", index=False)
