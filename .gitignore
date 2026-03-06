@@ -1,0 +1,52 @@
+# Data files (too large for git)
+data/
+*.parquet
+*.arrow
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# API keys
+.env
+*.key
+
+# Large output files
+outputs/data/*.parquet
+outputs/data/*.json
+outputs/data/*.jsonl
+
+# Keep output structure but not large files
+!outputs/figures/.gitkeep
+!outputs/tables/.gitkeep
+!outputs/data/.gitkeep
+!outputs/validation/.gitkeep
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Model weights (downloaded at runtime)
+models/
+*.bin
+*.safetensors

@@ -1,0 +1,14 @@
+Classify the following user prompt into exactly one of these topic categories:
+
+- general_knowledge: factual questions, trivia, explanations of concepts
+- coding: programming, debugging, software development
+- creative_writing: stories, poems, scripts, creative content
+- professional_advice: career, business, legal, financial guidance
+- personal_relationships: interpersonal advice, social situations
+- ethical_dilemmas: moral questions, value conflicts, fairness debates
+- education: homework help, study strategies, learning resources
+- other: anything that doesn't fit the above categories
+
+User prompt: {prompt}
+
+Respond with ONLY the category name, nothing else.

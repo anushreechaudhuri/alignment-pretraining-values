@@ -1,0 +1,14 @@
+torch
+transformers
+datasets
+vllm
+anthropic
+scipy
+statsmodels
+pandas
+numpy
+matplotlib
+seaborn
+scikit-learn
+tqdm
+huggingface_hub
