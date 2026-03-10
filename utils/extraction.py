@@ -6,18 +6,19 @@ asks it to identify the values expressed by the AI in its response. Each
 extracted value is classified into the Anthropic "Values in the Wild" taxonomy
 at level 2 (26 subcategories).
 
-The pipeline supports two providers:
+The pipeline supports two providers for bulk extraction:
 
-    * **OpenAI (GPT-5.2)** -- used for bulk extraction across all ~20,000
-      conversations. GPT-5.2 provides strong instruction-following at a
-      competitive per-token cost, making it well suited for high-volume
-      structured extraction.
+    * **OpenAI (GPT-5.2)** -- strong instruction-following at a competitive
+      per-token cost, well suited for high-volume structured extraction.
 
-    * **Anthropic (Claude Opus 4.6)** -- used for the validation sample.
-      Running validation through a different model family than the one used
-      for bulk extraction gives us methodological independence: if both
-      providers agree on which values are present, we can be more confident
-      the signal is real rather than an artifact of a single model's biases.
+    * **Anthropic (Claude Sonnet 4.6)** -- second bulk extractor providing
+      cross-family agreement data at the extraction stage itself.
+
+A third model, **Anthropic Claude Opus 4.6**, is reserved for the separate
+validation pass (Phase 4). Having three models across two provider families
+provides layered methodological independence: bulk extraction disagreements
+surface measurement noise, while validation by a more capable model
+adjudicates ambiguous cases.
 
 The two providers share a common prompt template and output schema so that
 results are directly comparable.
