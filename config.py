@@ -70,8 +70,15 @@ GENERATION_MAX_TOKENS = 1024
 GENERATION_TOP_P = 0.95
 
 # --- Value extraction parameters ---
-# We use Claude Sonnet for value extraction to balance cost and quality.
-EXTRACTION_MODEL = "claude-sonnet-4-20250514"
+# Bulk extraction uses OpenAI (GPT-5.2) and validation uses Anthropic
+# (Claude Opus 4.6). Using different model families for extraction vs.
+# validation provides methodological independence: systematic biases in one
+# provider's value-identification behavior are unlikely to be shared by the
+# other, strengthening our inter-rater reliability checks.
+EXTRACTION_MODEL = "gpt-5.2"
+EXTRACTION_PROVIDER = "openai"
+VALIDATION_EXTRACTION_MODEL = "claude-opus-4-6"
+VALIDATION_EXTRACTION_PROVIDER = "anthropic"
 EXTRACTION_MAX_RETRIES = 3
 EXTRACTION_BATCH_SIZE = 50
 
