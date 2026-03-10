@@ -91,7 +91,7 @@ def sample_validation_set(n=150):
     return sampled[:n]
 
 
-def run_extraction_on_sample(sample):
+def run_extraction_on_sample(sample, results_path):
     """
     Run the value extraction pipeline on the validation sample.
 
@@ -102,10 +102,17 @@ def run_extraction_on_sample(sample):
     serve as a higher-quality reference when adjudicating disagreements
     between the two bulk-extraction models.
 
+    Results are saved incrementally to ``results_path`` after each
+    conversation so that interrupted runs can be resumed without losing
+    progress. On resume, conversations whose ``prompt_id`` and
+    ``model_variant`` already appear in the output file are skipped.
+
     Args:
         sample: List of conversation dicts, each containing at minimum
             ``prompt_id``, ``model_variant``, ``user_prompt``, and
             ``model_response``.
+        results_path: Path where extraction results are written as JSON.
+            Used for both incremental saving and resume detection.
 
     Returns:
         List of extraction result dicts with keys ``prompt_id``,
@@ -134,10 +141,29 @@ def run_extraction_on_sample(sample):
     from config import VALIDATION_EXTRACTION_MODEL
     from tqdm import tqdm
 
-    client = anthropic.Anthropic()
-    results = []
+    existing_results = []
+    existing_keys = set()
+    if results_path.exists():
+        with open(results_path) as f:
+            existing_results = json.load(f)
+        for r in existing_results:
+            existing_keys.add((r["prompt_id"], r["model_variant"]))
+        print(f"  Loaded {len(existing_results)} existing extraction results")
 
-    for conv in tqdm(sample, desc="Extracting validation sample"):
+    remaining = [
+        c for c in sample
+        if (c["prompt_id"], c["model_variant"]) not in existing_keys
+    ]
+    if not remaining:
+        print(f"  All {len(sample)} conversations already extracted")
+        return existing_results
+
+    print(f"  {len(existing_keys)} already done, {len(remaining)} remaining")
+
+    client = anthropic.Anthropic()
+    results = list(existing_results)
+
+    for conv in tqdm(remaining, desc="Extracting validation sample"):
         prompt = build_extraction_prompt(
             conv["user_prompt"], conv["model_response"], taxonomy_str
         )
@@ -162,6 +188,9 @@ def run_extraction_on_sample(sample):
             "extracted_values": values,
             "raw_extraction": raw_text or "",
         })
+
+        with open(results_path, "w") as f:
+            json.dump(results, f, indent=2)
 
     return results
 
@@ -253,27 +282,29 @@ def main():
     """Run the validation pipeline."""
     VALIDATION_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Step 1: Sample conversations
-    sample = sample_validation_set(VALIDATION_SAMPLE_SIZE)
-    if not sample:
-        return
-
-    # Save sample
+    # Step 1: Sample conversations (cached so re-runs use the same sample)
     sample_path = VALIDATION_DIR / "validation_sample.json"
-    with open(sample_path, "w") as f:
-        json.dump(sample, f, indent=2)
-    print(f"Saved validation sample to {sample_path}")
+    if sample_path.exists():
+        with open(sample_path) as f:
+            sample = json.load(f)
+        print(f"Loaded cached validation sample ({len(sample)} conversations) "
+              f"from {sample_path}")
+    else:
+        sample = sample_validation_set(VALIDATION_SAMPLE_SIZE)
+        if not sample:
+            return
+        with open(sample_path, "w") as f:
+            json.dump(sample, f, indent=2)
+        print(f"Saved validation sample to {sample_path}")
 
     # Step 2: Generate manual coding template
     template_path = VALIDATION_DIR / "manual_coding_template.csv"
     generate_coding_template(sample, template_path)
 
-    # Step 3: Run extraction (requires API key)
+    # Step 3: Run extraction with incremental saving (requires API key)
+    results_path = VALIDATION_DIR / "validation_extractions.json"
     try:
-        results = run_extraction_on_sample(sample)
-        results_path = VALIDATION_DIR / "validation_extractions.json"
-        with open(results_path, "w") as f:
-            json.dump(results, f, indent=2)
+        results = run_extraction_on_sample(sample, results_path)
         print(f"Saved extraction results to {results_path}")
     except Exception as e:
         print(f"Extraction failed (API key may not be set): {e}")

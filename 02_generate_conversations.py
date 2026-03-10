@@ -120,9 +120,37 @@ def generate_with_hf(model_id, prompts, is_chat_model=True):
     return responses
 
 
+def _load_existing_prompt_ids(output_path):
+    """Load prompt_ids already present in a JSONL output file.
+
+    Args:
+        output_path: Path to a JSONL file where each line is a JSON object
+            with a ``prompt_id`` field.
+
+    Returns:
+        A set of prompt_id strings found in the file, or an empty set if
+        the file does not exist or is empty.
+    """
+    existing_ids = set()
+    if output_path.exists():
+        with open(output_path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        rec = json.loads(line)
+                        existing_ids.add(rec["prompt_id"])
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+    return existing_ids
+
+
 def process_model_variant(variant_name, model_id, prompts_df):
     """
     Generate conversations for a single model variant and save results.
+
+    Supports resuming from partial runs: any prompt_ids already present in
+    the output file are skipped. New results are appended incrementally.
 
     Args:
         variant_name: Short name like "unfiltered_dpo" or "alignment_base"
@@ -131,12 +159,15 @@ def process_model_variant(variant_name, model_id, prompts_df):
     """
     output_path = CONVERSATIONS_DIR / f"{variant_name}.jsonl"
 
-    # Skip if already generated (allows resuming)
-    if output_path.exists():
-        existing = sum(1 for _ in open(output_path))
-        if existing >= len(prompts_df):
-            print(f"Skipping {variant_name}: already have {existing} conversations")
-            return
+    existing_ids = _load_existing_prompt_ids(output_path)
+    if len(existing_ids) >= len(prompts_df):
+        print(f"Skipping {variant_name}: already have {len(existing_ids)} conversations")
+        return
+
+    remaining_df = prompts_df[~prompts_df["prompt_id"].isin(existing_ids)]
+    if len(existing_ids) > 0:
+        print(f"  Resuming {variant_name}: {len(existing_ids)} done, "
+              f"{len(remaining_df)} remaining")
 
     is_base = "base" in variant_name
     is_chat = not is_base
@@ -147,20 +178,20 @@ def process_model_variant(variant_name, model_id, prompts_df):
         tokenizer = AutoTokenizer.from_pretrained(model_id)
         formatted = [
             format_chat_prompt(row["prompt_text"], SYSTEM_PROMPT, tokenizer)
-            for _, row in prompts_df.iterrows()
+            for _, row in remaining_df.iterrows()
         ]
     else:
         formatted = [
             format_base_prompt(row["prompt_text"], SYSTEM_PROMPT)
-            for _, row in prompts_df.iterrows()
+            for _, row in remaining_df.iterrows()
         ]
 
     # Generate responses
     responses = generate_with_vllm(model_id, formatted, is_chat)
 
-    # Package into conversation records
+    # Package into conversation records and append to output file
     conversations = []
-    for (_, row), response in zip(prompts_df.iterrows(), responses):
+    for (_, row), response in zip(remaining_df.iterrows(), responses):
         conversations.append({
             "prompt_id": row["prompt_id"],
             "model_variant": variant_name,
@@ -171,8 +202,11 @@ def process_model_variant(variant_name, model_id, prompts_df):
             "topic_category": row.get("topic_category", "unknown"),
         })
 
-    save_conversations(conversations, output_path)
-    print(f"Saved {len(conversations)} conversations for {variant_name}")
+    with open(output_path, "a") as f:
+        for conv in conversations:
+            f.write(json.dumps(conv) + "\n")
+    print(f"Saved {len(conversations)} new conversations for {variant_name} "
+          f"(total: {len(existing_ids) + len(conversations)})")
 
 
 def main():
