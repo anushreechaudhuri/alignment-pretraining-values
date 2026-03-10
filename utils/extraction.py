@@ -351,7 +351,7 @@ def extract_with_openai(prompt, model, client, max_retries=3):
         try:
             response = client.beta.chat.completions.parse(
                 model=model,
-                max_tokens=2000,
+                max_completion_tokens=2000,
                 temperature=0,
                 messages=[
                     {"role": "system", "content": SYSTEM_MESSAGE},
