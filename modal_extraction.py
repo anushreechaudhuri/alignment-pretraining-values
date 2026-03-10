@@ -33,7 +33,7 @@ outputs_vol = modal.Volume.from_name("alignment-outputs", create_if_missing=True
 
 EXTRACTION_MODELS = {
     "gpt-5.2": "openai",
-    "claude-sonnet-4-6": "anthropic",
+    # "claude-sonnet-4-6": "anthropic",  # disabled until Anthropic credits added
 }
 
 SYSTEM_MESSAGE = (
