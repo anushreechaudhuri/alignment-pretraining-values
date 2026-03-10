@@ -189,11 +189,50 @@ def download_results():
         for fname in os.listdir(conv_dir):
             fpath = os.path.join(conv_dir, fname)
             size = os.path.getsize(fpath)
-            # Count lines
             with open(fpath) as f:
                 n_lines = sum(1 for _ in f)
             results[fname] = {"size_bytes": size, "n_conversations": n_lines}
     return results
+
+
+@app.function(
+    volumes={"/outputs": outputs_vol},
+    timeout=36000,  # 10 hours total for all models
+)
+def run_all_models(prompts: list[dict], model_keys: list[str]):
+    """
+    Server-side orchestrator that runs all model variants sequentially.
+
+    This runs entirely on Modal's infrastructure so your laptop can disconnect.
+    Each model variant is called via .remote() to get its own GPU container.
+    Results are saved to the persistent volume after each model completes.
+    """
+    results_summary = {}
+    for key in model_keys:
+        print(f"\n{'='*60}")
+        print(f"Starting: {key} ({GEODESIC_MODELS[key]})")
+        print(f"{'='*60}")
+        try:
+            conversations = generate_for_model.remote(key, prompts)
+            results_summary[key] = {
+                "status": "success",
+                "n_conversations": len(conversations),
+            }
+            print(f"Completed: {key} - {len(conversations)} conversations")
+        except Exception as e:
+            results_summary[key] = {
+                "status": "failed",
+                "error": str(e),
+            }
+            print(f"Failed: {key} - {e}")
+
+    print(f"\n{'='*60}")
+    print("ALL MODELS COMPLETE")
+    print(f"{'='*60}")
+    for key, info in results_summary.items():
+        print(f"  {key}: {info['status']}")
+
+    return results_summary
 
 
 @app.local_entrypoint()
@@ -206,11 +245,18 @@ def main(
     """
     Entry point for running inference from the command line.
 
-    Args:
-        model_key: Which model variant to run (e.g., "unfiltered_dpo")
-        all: If True, run all 8 model variants sequentially
-        prompts_file: Path to the JSON file with sampled prompts
-        list_results: If True, just list existing results and exit
+    Usage:
+        # Run all models server-side (safe to disconnect laptop):
+        modal run --detach modal_inference.py --all
+
+        # Run a single model:
+        modal run --detach modal_inference.py --model-key unfiltered_dpo
+
+        # Check results:
+        modal run modal_inference.py --list-results
+
+        # Download results:
+        modal volume get alignment-outputs conversations/ ./data/conversations/
     """
     if list_results:
         results = download_results.remote()
@@ -224,7 +270,6 @@ def main(
     print(f"Loaded {len(prompts)} prompts from {prompts_file}")
 
     if all:
-        # Run all model variants
         model_keys = list(GEODESIC_MODELS.keys())
     elif model_key:
         model_keys = [model_key]
@@ -232,12 +277,16 @@ def main(
         print("Specify --model-key or --all")
         return
 
-    for key in model_keys:
-        print(f"\n{'='*60}")
-        print(f"Running: {key} ({GEODESIC_MODELS[key]})")
-        print(f"{'='*60}")
-        conversations = generate_for_model.remote(key, prompts)
-        print(f"Completed: {len(conversations)} conversations")
+    # Dispatch to server-side orchestrator so laptop can disconnect
+    print(f"Dispatching {len(model_keys)} model(s) to Modal server...")
+    print("Safe to close your laptop - run continues on Modal.")
+    print("Check progress at: https://modal.com/apps/alignment-pretraining-values")
+    print("Check results later with: modal run modal_inference.py --list-results")
 
-    print("\nAll done! Download results with:")
-    print("  modal volume get alignment-outputs conversations/ ./data/conversations/")
+    summary = run_all_models.remote(prompts, model_keys)
+
+    print("\nResults:")
+    for key, info in summary.items():
+        print(f"  {key}: {info}")
+
+    print("\nDownload with: modal volume get alignment-outputs conversations/ ./data/conversations/")
