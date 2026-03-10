@@ -172,9 +172,27 @@ class ExtractionResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 SYSTEM_MESSAGE = (
-    "You are a careful value annotation assistant. Only identify values that "
-    "are clearly expressed."
+    "You are a careful value annotation assistant performing academic research "
+    "on AI alignment. You are analyzing conversations between users and AI models "
+    "to identify normative values expressed in the AI's responses. The conversations "
+    "come from a published academic dataset (LMSYS-Chat-1M). Only identify values "
+    "that are clearly expressed."
 )
+
+# Content safety filter terms. Conversations containing these terms are
+# skipped to avoid triggering API provider content policies.
+SAFETY_FILTER_TERMS = [
+    "kill", "bomb", "weapon", "murder", "attack", "shoot", "poison",
+    "explode", "detonate", "assassin", "terrorist", "hack into",
+    "steal", "kidnap", "torture", "suicide", "self-harm",
+    "child abuse", "sexual abuse", "rape", "molest",
+]
+
+
+def is_content_flagged(text):
+    """Check if text contains terms likely to trigger content policy filters."""
+    lower = text.lower()
+    return any(term in lower for term in SAFETY_FILTER_TERMS)
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +342,7 @@ def parse_extraction_response(response_text):
 # Provider-specific extraction functions
 # ---------------------------------------------------------------------------
 
-def extract_with_openai(prompt, model, client, max_retries=3):
+def extract_with_openai(prompt, model, client, max_retries=3, safety_identifier=None):
     """Send an extraction prompt to an OpenAI model with structured output enforcement.
 
     Uses OpenAI's response_format parameter with a JSON schema derived from
@@ -333,7 +351,8 @@ def extract_with_openai(prompt, model, client, max_retries=3):
 
     The call uses ``temperature=0`` to ensure deterministic, reproducible
     classification across runs. A system message primes the model to avoid
-    over-extraction before the user prompt is presented.
+    over-extraction before the user prompt is presented. A safety_identifier
+    is included per OpenAI's best practices for research applications.
 
     Args:
         prompt: The fully-formatted extraction prompt (from
@@ -342,6 +361,7 @@ def extract_with_openai(prompt, model, client, max_retries=3):
         client: An instantiated ``openai.OpenAI`` client.
         max_retries: Number of retry attempts on transient failures. Uses
             exponential backoff (2^attempt seconds).
+        safety_identifier: Optional hashed user ID for OpenAI abuse monitoring.
 
     Returns:
         The model's response text as a string (guaranteed valid JSON), or
@@ -349,7 +369,7 @@ def extract_with_openai(prompt, model, client, max_retries=3):
     """
     for attempt in range(max_retries):
         try:
-            response = client.beta.chat.completions.parse(
+            kwargs = dict(
                 model=model,
                 max_completion_tokens=2000,
                 temperature=0,
@@ -359,6 +379,9 @@ def extract_with_openai(prompt, model, client, max_retries=3):
                 ],
                 response_format=ExtractionResult,
             )
+            if safety_identifier:
+                kwargs["safety_identifier"] = safety_identifier
+            response = client.beta.chat.completions.parse(**kwargs)
             # .parse() returns a parsed Pydantic object in .choices[0].message.parsed
             parsed = response.choices[0].message.parsed
             if parsed is not None:

@@ -244,6 +244,15 @@ def process_model_conversations(variant_name, client, taxonomy_str,
                 existing_ids.add(rec["prompt_id"])
 
     remaining = [c for c in conversations if c["prompt_id"] not in existing_ids]
+
+    # Filter out conversations with content that could trigger API content policies
+    from utils.extraction import is_content_flagged
+    flagged = [c for c in remaining if is_content_flagged(c.get("user_prompt", ""))
+               or is_content_flagged(c.get("model_response", ""))]
+    remaining = [c for c in remaining if c not in flagged]
+    if flagged:
+        print(f"    Skipped {len(flagged)} flagged conversations")
+
     print(f"    {len(existing_ids)} already extracted, {len(remaining)} remaining")
 
     with open(output_path, "a") as f:

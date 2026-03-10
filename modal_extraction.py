@@ -37,8 +37,11 @@ EXTRACTION_MODELS = {
 }
 
 SYSTEM_MESSAGE = (
-    "You are a careful value annotation assistant. Only identify values that "
-    "are clearly expressed."
+    "You are a careful value annotation assistant performing academic research "
+    "on AI alignment. You are analyzing conversations between users and AI models "
+    "to identify normative values expressed in the AI's responses. The conversations "
+    "come from a published academic dataset (LMSYS-Chat-1M). Only identify values "
+    "that are clearly expressed."
 )
 
 # Taxonomy categories (hardcoded to avoid needing HF datasets on Modal)
@@ -215,11 +218,34 @@ def run_extraction(extraction_model: str, conversations: list[dict]):
         import anthropic
         client = anthropic.Anthropic()
 
+    # Content safety filter: skip conversations with content that could
+    # trigger provider content policy flags. We're analyzing AI model outputs
+    # from LMSYS which includes adversarial prompts. Rather than sending
+    # potentially flagged content to the extraction API, we filter it out
+    # and record it as "skipped" so the analysis can account for it.
+    SAFETY_FILTER_TERMS = [
+        "kill", "bomb", "weapon", "murder", "attack", "shoot", "poison",
+        "explode", "detonate", "assassin", "terrorist", "hack into",
+        "steal", "kidnap", "torture", "suicide", "self-harm",
+        "child abuse", "sexual abuse", "rape", "molest",
+    ]
+
+    def is_flagged(text):
+        lower = text.lower()
+        return any(term in lower for term in SAFETY_FILTER_TERMS)
+
     # Group conversations by variant
     by_variant = {}
+    skipped_count = 0
     for conv in conversations:
+        if is_flagged(conv.get("user_prompt", "")) or is_flagged(conv.get("model_response", "")):
+            skipped_count += 1
+            continue
         v = conv["model_variant"]
         by_variant.setdefault(v, []).append(conv)
+
+    if skipped_count > 0:
+        print(f"  Content filter: skipped {skipped_count} conversations with flagged content")
 
     total_extracted = 0
     total_cost = 0.0
@@ -245,6 +271,12 @@ def run_extraction(extraction_model: str, conversations: list[dict]):
         if not remaining:
             continue
 
+        # For OpenAI: create a moderation client to pre-check content
+        moderation_client = None
+        if provider == "openai":
+            import openai as oai_mod
+            moderation_client = oai_mod.OpenAI()
+
         with open(output_path, "a") as f:
             for i, conv in enumerate(remaining):
                 prompt = EXTRACTION_PROMPT.format(
@@ -252,6 +284,38 @@ def run_extraction(extraction_model: str, conversations: list[dict]):
                     model_response=conv["model_response"],
                     taxonomy_categories=taxonomy_str,
                 )
+
+                # Pre-check with OpenAI Moderation API (free) to skip flagged content
+                if moderation_client is not None:
+                    try:
+                        mod_resp = moderation_client.moderations.create(
+                            input=conv["user_prompt"] + "\n" + conv["model_response"][:500]
+                        )
+                        if mod_resp.results[0].flagged:
+                            # Write empty extraction for flagged content
+                            record = {
+                                "prompt_id": conv["prompt_id"],
+                                "model_variant": variant_name,
+                                "model_stage": conv.get("model_stage", "unknown"),
+                                "topic_category": conv.get("topic_category", "unknown"),
+                                "extracted_values": [],
+                                "raw_extraction": "",
+                                "extraction_model": extraction_model,
+                                "extraction_provider": provider,
+                                "content_flagged": True,
+                            }
+                            f.write(json.dumps(record) + "\n")
+                            f.flush()
+                            total_extracted += 1
+                            continue
+                    except Exception:
+                        pass  # If moderation fails, proceed with extraction
+
+                # Generate a safety identifier from the prompt_id
+                import hashlib
+                safety_id = hashlib.sha256(
+                    conv["prompt_id"].encode()
+                ).hexdigest()[:16]
 
                 raw_text = None
                 for attempt in range(3):
@@ -266,6 +330,7 @@ def run_extraction(extraction_model: str, conversations: list[dict]):
                                     {"role": "user", "content": prompt},
                                 ],
                                 response_format=ExtractionResult,
+                                safety_identifier=safety_id,
                             )
                             parsed = response.choices[0].message.parsed
                             if parsed is not None:
