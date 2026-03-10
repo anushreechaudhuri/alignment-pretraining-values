@@ -378,4 +378,38 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default=None,
+                        help="Run extraction for a single model only (e.g., 'gpt-5.2' or 'claude-sonnet-4-6'). "
+                             "Omit to run all extraction models sequentially.")
+    args = parser.parse_args()
+
+    if args.model:
+        # Run a single extraction model (for parallel execution)
+        from config import EXTRACTION_MODELS
+        if args.model not in EXTRACTION_MODELS:
+            print(f"Unknown model: {args.model}. Available: {list(EXTRACTION_MODELS.keys())}")
+        else:
+            provider = EXTRACTION_MODELS[args.model]
+            client = _create_client(provider)
+            taxonomy_str = format_taxonomy_for_prompt()
+            cost_tracker = CostTracker(budget_cap=30.0)
+            conv_dir = DATA_DIR / "conversations"
+            output_dir = EXTRACTIONS_DIR / args.model
+
+            print(f"Running extraction with {args.model} ({provider})")
+            for variant_file in sorted(conv_dir.glob("*.jsonl")):
+                variant_name = variant_file.stem
+                print(f"\n  Variant: {variant_name}")
+                process_model_conversations(
+                    variant_name, client, taxonomy_str,
+                    model=args.model, provider=provider,
+                    output_dir=output_dir, cost_tracker=cost_tracker,
+                )
+                if cost_tracker.is_over_budget():
+                    print("Budget exceeded, halting.")
+                    break
+            print(f"\n{cost_tracker.summary()}")
+    else:
+        main()
