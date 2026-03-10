@@ -80,13 +80,15 @@ class TopicClassification(BaseModel):
 EFFECTIVE_MIN_PROMPT_LENGTH = 30
 
 
+CANDIDATES_CACHE_PATH = DATA_DIR / "lmsys_candidates_cache.json"
+
+
 def extract_english_first_turns(max_candidates=50000):
     """
     Stream through LMSYS-Chat-1M and extract English first-turn user messages.
 
-    We stream rather than downloading the full ~1M dataset because we only
-    need a fraction of it. We collect up to max_candidates English prompts,
-    from which we'll later sample our final 2,500.
+    Results are cached to disk so subsequent runs skip the streaming step
+    entirely. Delete data/lmsys_candidates_cache.json to force a re-stream.
 
     Args:
         max_candidates: Maximum number of English prompts to collect.
@@ -95,6 +97,14 @@ def extract_english_first_turns(max_candidates=50000):
     Returns:
         List of dicts with keys: conversation_id, prompt_text, model_used
     """
+    # Return cached candidates if available
+    if CANDIDATES_CACHE_PATH.exists():
+        print(f"Loading cached candidates from {CANDIDATES_CACHE_PATH}")
+        with open(CANDIDATES_CACHE_PATH) as f:
+            candidates = json.load(f)
+        print(f"Loaded {len(candidates)} cached English first turns")
+        return candidates
+
     print(f"Streaming LMSYS-Chat-1M to collect up to {max_candidates} English first turns...")
 
     ds = load_dataset("lmsys/lmsys-chat-1m", split="train", streaming=True)
@@ -139,6 +149,12 @@ def extract_english_first_turns(max_candidates=50000):
             break
 
     print(f"Scanned {total_seen} conversations, collected {len(candidates)} English first turns")
+
+    # Cache to disk for future runs
+    with open(CANDIDATES_CACHE_PATH, "w") as f:
+        json.dump(candidates, f)
+    print(f"Cached candidates to {CANDIDATES_CACHE_PATH}")
+
     return candidates
 
 
@@ -270,10 +286,32 @@ def classify_prompts_llm(candidates, batch_size=50):
     total_output_tokens = 0
     max_retries = 5
 
+    # Load classification cache for resume support. Each entry maps a
+    # conversation_id to its classified topic_category, so we can skip
+    # prompts that were already classified in a previous (interrupted) run.
+    classification_cache_path = DATA_DIR / "classification_cache.json"
+    if classification_cache_path.exists():
+        with open(classification_cache_path) as f:
+            classification_cache = json.load(f)
+        print(f"Loaded classification cache with {len(classification_cache)} entries")
+    else:
+        classification_cache = {}
+
+    already_cached = 0
+    newly_classified = 0
+
     print(f"Classifying {len(candidates)} prompts with {CLASSIFICATION_MODEL} "
           f"(structured output)...")
 
     for i, candidate in enumerate(candidates):
+        cid = candidate["conversation_id"]
+
+        # Use cached result if available
+        if cid in classification_cache:
+            candidate["topic_category"] = classification_cache[cid]
+            already_cached += 1
+            continue
+
         prompt_text = candidate["prompt_text"]
         user_message = template.replace("{prompt}", prompt_text)
 
@@ -288,6 +326,8 @@ def classify_prompts_llm(candidates, batch_size=50):
 
                 result = response.choices[0].message.parsed
                 candidate["topic_category"] = result.category.value
+                classification_cache[cid] = result.category.value
+                newly_classified += 1
 
                 if response.usage:
                     total_input_tokens += response.usage.prompt_tokens
@@ -310,17 +350,30 @@ def classify_prompts_llm(candidates, batch_size=50):
                     print(f"  API error on prompt {i} after {max_retries} "
                           f"attempts. Defaulting to 'other'.")
                     candidate["topic_category"] = "other"
+                    classification_cache[cid] = "other"
+                    newly_classified += 1
+
+        # Save cache incrementally every 100 classifications
+        if newly_classified > 0 and newly_classified % 100 == 0:
+            with open(classification_cache_path, "w") as f:
+                json.dump(classification_cache, f)
 
         if (i + 1) % 100 == 0:
-            print(f"  Classified {i + 1}/{len(candidates)} prompts")
+            print(f"  Classified {i + 1}/{len(candidates)} "
+                  f"({already_cached} cached, {newly_classified} new)")
+
+    # Final cache save
+    with open(classification_cache_path, "w") as f:
+        json.dump(classification_cache, f)
 
     usage = {
         "total_input_tokens": total_input_tokens,
         "total_output_tokens": total_output_tokens,
     }
 
-    print(f"Classification complete. Tokens used: "
-          f"{total_input_tokens:,} input, {total_output_tokens:,} output")
+    print(f"Classification complete. {already_cached} from cache, "
+          f"{newly_classified} newly classified. "
+          f"Tokens: {total_input_tokens:,} input, {total_output_tokens:,} output")
 
     return candidates, usage
 
