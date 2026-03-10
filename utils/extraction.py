@@ -30,6 +30,36 @@ dataset), so we include retry logic, rate limiting, and incremental saving.
 import json
 import time
 from pathlib import Path
+from pydantic import BaseModel, Field
+from typing import Optional
+from enum import Enum
+
+
+# ---------------------------------------------------------------------------
+# Pydantic schema for structured extraction output
+# ---------------------------------------------------------------------------
+
+class ConfidenceLevel(str, Enum):
+    high = "high"
+    medium = "medium"
+    low = "low"
+
+
+class ExtractedValue(BaseModel):
+    """A single value identified in the AI assistant's response."""
+    raw_value_name: str = Field(description="Short name for the value (2-5 words)")
+    description: str = Field(description="One sentence describing how the AI expressed this value")
+    taxonomy_level2_category: str = Field(description="Closest matching level-2 subcategory from the taxonomy")
+    taxonomy_level3_category: str = Field(description="Parent level-3 category (Epistemic values, Social values, Practical values, Protective values, or Personal values)")
+    confidence: ConfidenceLevel = Field(description="Confidence in this classification")
+
+
+class ExtractionResult(BaseModel):
+    """The complete extraction output for one conversation."""
+    values: list[ExtractedValue] = Field(
+        default_factory=list,
+        description="List of values expressed by the AI. Empty if the response is purely factual."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -142,11 +172,11 @@ def parse_extraction_response(response_text):
 
 def extract_with_openai(prompt, model, client, max_retries=3):
     """
-    Send an extraction prompt to an OpenAI model and return the raw response.
+    Send an extraction prompt to an OpenAI model with structured output enforcement.
 
-    Uses the OpenAI Chat Completions API. The prompt is sent as a single
-    user message with no system message, matching the Anthropic call
-    structure so that results are comparable.
+    Uses OpenAI's response_format parameter with a JSON schema derived from
+    our Pydantic model. This guarantees the response is valid JSON matching
+    our expected structure -- no parsing failures, no malformed output.
 
     Args:
         prompt: The fully-formatted extraction prompt (from
@@ -157,16 +187,22 @@ def extract_with_openai(prompt, model, client, max_retries=3):
             exponential backoff (2^attempt seconds).
 
     Returns:
-        The model's response text as a string, or ``None`` if all retries
-        are exhausted.
+        The model's response text as a string (guaranteed valid JSON), or
+        ``None`` if all retries are exhausted.
     """
     for attempt in range(max_retries):
         try:
-            response = client.chat.completions.create(
+            response = client.beta.chat.completions.parse(
                 model=model,
                 max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}],
+                response_format=ExtractionResult,
             )
+            # .parse() returns a parsed Pydantic object in .choices[0].message.parsed
+            parsed = response.choices[0].message.parsed
+            if parsed is not None:
+                return parsed.model_dump_json()
+            # Fallback to raw content if parsing failed on the SDK side
             return response.choices[0].message.content
         except Exception as e:
             wait_time = 2 ** attempt
@@ -176,12 +212,28 @@ def extract_with_openai(prompt, model, client, max_retries=3):
     return None
 
 
+def _get_anthropic_tool_schema():
+    """
+    Build an Anthropic tool definition from our Pydantic schema.
+
+    Anthropic doesn't have a native response_format parameter like OpenAI,
+    but we can force structured output by defining a tool whose input schema
+    matches our desired output structure and asking the model to use it.
+    """
+    return {
+        "name": "record_extracted_values",
+        "description": "Record the values extracted from the AI assistant's response, classified into the taxonomy.",
+        "input_schema": ExtractionResult.model_json_schema(),
+    }
+
+
 def extract_with_anthropic(prompt, model, client, max_retries=3):
     """
-    Send an extraction prompt to an Anthropic model and return the raw response.
+    Send an extraction prompt to an Anthropic model with structured output via tool use.
 
-    Uses the Anthropic Messages API. The prompt is sent as a single user
-    message, keeping the call structure symmetric with the OpenAI path.
+    Forces the model to return structured JSON by defining a tool whose input
+    schema matches our ExtractionResult Pydantic model, then requiring the
+    model to call that tool. This avoids JSON parsing failures.
 
     Args:
         prompt: The fully-formatted extraction prompt (from
@@ -193,17 +245,31 @@ def extract_with_anthropic(prompt, model, client, max_retries=3):
             exponential backoff (2^attempt seconds).
 
     Returns:
-        The model's response text as a string, or ``None`` if all retries
+        The model's response text as a JSON string, or ``None`` if all retries
         are exhausted.
     """
+    tool = _get_anthropic_tool_schema()
+
     for attempt in range(max_retries):
         try:
             response = client.messages.create(
                 model=model,
                 max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}],
+                tools=[tool],
+                tool_choice={"type": "tool", "name": "record_extracted_values"},
             )
-            return response.content[0].text
+            # Extract the tool call input (which is our structured data)
+            for block in response.content:
+                if block.type == "tool_use":
+                    return json.dumps(block.input)
+
+            # Fallback: if no tool_use block, try text content
+            for block in response.content:
+                if hasattr(block, "text"):
+                    return block.text
+
+            return None
         except Exception as e:
             wait_time = 2 ** attempt
             print(f"  Anthropic attempt {attempt + 1} failed: {e}. Retrying in {wait_time}s...")
