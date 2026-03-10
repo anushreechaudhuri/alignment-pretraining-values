@@ -585,33 +585,36 @@ def main():
     improves the quality of stratification.
     """
 
-    # Step 1: Extract English first turns from LMSYS
+    # Step 1: Extract English first turns from LMSYS (cached after first run)
     candidates = extract_english_first_turns(max_candidates=50000)
 
     # Step 2: Deduplicate and filter meaningless prompts
     candidates = deduplicate_prompts(candidates)
     candidates = filter_meaningless_prompts(candidates)
 
-    # Step 3: Classify by topic
-    classification_usage = None
-    if os.environ.get("OPENAI_API_KEY"):
-        print("\nOpenAI API key found. Using LLM-based topic classification "
-              f"({CLASSIFICATION_MODEL}).")
-        candidates, classification_usage = classify_prompts_llm(candidates)
-        classification_method = "llm"
-    else:
-        print("\nNo OpenAI API key found. Falling back to keyword-based "
-              "topic classification.")
-        candidates = classify_prompts_simple(candidates)
-        classification_method = "keyword_heuristic"
-
-    print(f"Classification method used: {classification_method}")
+    # Step 3: Quick keyword classification for initial stratification.
+    # This runs on all 50K candidates instantly (no API calls).
+    candidates = classify_prompts_simple(candidates)
 
     # Step 4: Remove AI safety prompts
     candidates = filter_safety_prompts(candidates)
 
-    # Step 5: Stratified sample
+    # Step 5: Stratified sample (uses keyword labels for stratification)
     sampled = stratified_sample(candidates, target_total=NUM_PROMPTS)
+
+    # Step 6: Reclassify ONLY the 2,500 sampled prompts with the LLM.
+    # This is 20x cheaper than classifying all 50K candidates.
+    classification_usage = None
+    if os.environ.get("OPENAI_API_KEY"):
+        print(f"\nReclassifying {len(sampled)} sampled prompts with "
+              f"{CLASSIFICATION_MODEL} (structured output)...")
+        sampled, classification_usage = classify_prompts_llm(sampled)
+        classification_method = "llm"
+    else:
+        print("\nNo OpenAI API key. Keeping keyword-based classifications.")
+        classification_method = "keyword_heuristic"
+
+    print(f"Classification method used: {classification_method}")
 
     # Step 6: Save
     output_path = DATA_DIR / "sampled_prompts.parquet"
