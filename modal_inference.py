@@ -143,6 +143,7 @@ def generate_for_model(model_key: str, prompts: list[dict]):
         temperature=GENERATION_TEMPERATURE,
         top_p=GENERATION_TOP_P,
         max_tokens=GENERATION_MAX_TOKENS,
+        seed=42,
     )
 
     print(f"Generating {len(formatted_prompts)} responses...")

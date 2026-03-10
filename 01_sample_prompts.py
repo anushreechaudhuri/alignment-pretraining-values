@@ -23,6 +23,7 @@ Output: data/sampled_prompts.parquet
 """
 
 import json
+import re
 import hashlib
 from pathlib import Path
 from collections import Counter
@@ -34,6 +35,8 @@ from tqdm import tqdm
 from config import (
     DATA_DIR, NUM_PROMPTS, MIN_PROMPT_LENGTH, TOPIC_CATEGORIES,
 )
+
+EFFECTIVE_MIN_PROMPT_LENGTH = 30
 
 
 def extract_english_first_turns(max_candidates=50000):
@@ -82,7 +85,7 @@ def extract_english_first_turns(max_candidates=50000):
             continue
 
         # Apply minimum length filter
-        if len(content.strip()) < MIN_PROMPT_LENGTH:
+        if len(content.strip()) < EFFECTIVE_MIN_PROMPT_LENGTH:
             continue
 
         candidates.append({
@@ -96,6 +99,83 @@ def extract_english_first_turns(max_candidates=50000):
 
     print(f"Scanned {total_seen} conversations, collected {len(candidates)} English first turns")
     return candidates
+
+
+def deduplicate_prompts(candidates):
+    """
+    Remove exact-duplicate prompts based on whitespace-normalized prompt text.
+
+    Two prompts are considered duplicates if their text is identical after
+    stripping leading/trailing whitespace.  When duplicates are found, only
+    the first occurrence (in list order) is kept.
+
+    Args:
+        candidates: List of dicts, each containing a ``prompt_text`` field.
+
+    Returns:
+        A new list with duplicates removed.  The original list is not
+        modified.
+    """
+    seen = set()
+    unique = []
+    for c in candidates:
+        key = c["prompt_text"].strip()
+        if key not in seen:
+            seen.add(key)
+            unique.append(c)
+
+    n_removed = len(candidates) - len(unique)
+    print(f"Deduplication: removed {n_removed} exact duplicates "
+          f"({len(candidates)} -> {len(unique)})")
+    return unique
+
+
+def filter_meaningless_prompts(candidates):
+    """
+    Remove prompts that are clearly not meaningful natural-language requests.
+
+    A prompt is considered meaningless if it meets any of the following
+    criteria:
+
+    * It consists entirely of uppercase letters (after stripping whitespace
+      and punctuation).
+    * It consists entirely of punctuation and/or whitespace.
+    * It contains fewer than two word-like tokens (sequences of alphabetic
+      characters).
+
+    Args:
+        candidates: List of dicts, each containing a ``prompt_text`` field.
+
+    Returns:
+        A new list with meaningless prompts removed.
+    """
+    filtered = []
+    removed = 0
+    for c in candidates:
+        text = c["prompt_text"].strip()
+
+        # Remove if entirely punctuation / whitespace
+        if not re.search(r"[a-zA-Z]", text):
+            removed += 1
+            continue
+
+        # Remove if all-caps (after stripping non-alpha characters)
+        alpha_only = re.sub(r"[^a-zA-Z]", "", text)
+        if alpha_only and alpha_only == alpha_only.upper() and len(alpha_only) > 3:
+            removed += 1
+            continue
+
+        # Remove if fewer than two word-like tokens
+        words = re.findall(r"[a-zA-Z]+", text)
+        if len(words) < 2:
+            removed += 1
+            continue
+
+        filtered.append(c)
+
+    print(f"Meaningless-prompt filter: removed {removed} prompts "
+          f"({len(candidates)} -> {len(filtered)})")
+    return filtered
 
 
 def classify_prompts_simple(candidates):
@@ -273,10 +353,14 @@ def main():
     # Step 1: Extract English first turns from LMSYS
     candidates = extract_english_first_turns(max_candidates=50000)
 
-    # Step 2: Classify by topic
+    # Step 2: Deduplicate and filter meaningless prompts
+    candidates = deduplicate_prompts(candidates)
+    candidates = filter_meaningless_prompts(candidates)
+
+    # Step 3: Classify by topic
     candidates = classify_prompts_simple(candidates)
 
-    # Step 3: Remove AI safety prompts
+    # Step 4: Remove AI safety prompts
     candidates = filter_safety_prompts(candidates)
 
     # Step 4: Stratified sample

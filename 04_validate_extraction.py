@@ -95,19 +95,26 @@ def run_extraction_on_sample(sample):
     """
     Run the value extraction pipeline on the validation sample.
 
-    This calls the same extraction logic as Phase 3 but on a small
-    sample, so we can check quality before committing to the full run.
+    Uses the same ``extract_with_anthropic`` function that the production
+    pipeline (Phase 3) relies on, including structured-output enforcement
+    via tool use.  The validation extraction is performed with the
+    VALIDATION_EXTRACTION_MODEL (Claude Opus 4.6) so that its results can
+    serve as a higher-quality reference when adjudicating disagreements
+    between the two bulk-extraction models.
 
     Args:
-        sample: List of conversation dicts
+        sample: List of conversation dicts, each containing at minimum
+            ``prompt_id``, ``model_variant``, ``user_prompt``, and
+            ``model_response``.
 
     Returns:
-        List of extraction result dicts
+        List of extraction result dicts with keys ``prompt_id``,
+        ``model_variant``, ``user_prompt``, ``model_response``,
+        ``extracted_values``, and ``raw_extraction``.
     """
     import anthropic
     from utils.taxonomy import build_category_lookup, get_level3_categories
 
-    # Build taxonomy string for the prompt
     lookup = build_category_lookup()
     level3_cats = [name for _, name in get_level3_categories()]
 
@@ -119,13 +126,16 @@ def run_extraction_on_sample(sample):
             lines.append(f"  - {sc}")
     taxonomy_str = "\n".join(lines)
 
-    from utils.extraction import build_extraction_prompt, parse_extraction_response
+    from utils.extraction import (
+        build_extraction_prompt,
+        extract_with_anthropic,
+        parse_extraction_response,
+    )
+    from config import VALIDATION_EXTRACTION_MODEL
+    from tqdm import tqdm
 
     client = anthropic.Anthropic()
     results = []
-
-    from config import EXTRACTION_MODEL
-    from tqdm import tqdm
 
     for conv in tqdm(sample, desc="Extracting validation sample"):
         prompt = build_extraction_prompt(
@@ -133,13 +143,12 @@ def run_extraction_on_sample(sample):
         )
 
         try:
-            response = client.messages.create(
-                model=EXTRACTION_MODEL,
-                max_tokens=2000,
-                messages=[{"role": "user", "content": prompt}],
+            raw_text = extract_with_anthropic(
+                prompt,
+                model=VALIDATION_EXTRACTION_MODEL,
+                client=client,
             )
-            raw_text = response.content[0].text
-            values = parse_extraction_response(raw_text)
+            values = parse_extraction_response(raw_text) if raw_text else []
         except Exception as e:
             print(f"  Error: {e}")
             raw_text = ""
@@ -151,7 +160,7 @@ def run_extraction_on_sample(sample):
             "user_prompt": conv["user_prompt"],
             "model_response": conv["model_response"],
             "extracted_values": values,
-            "raw_extraction": raw_text,
+            "raw_extraction": raw_text or "",
         })
 
     return results
