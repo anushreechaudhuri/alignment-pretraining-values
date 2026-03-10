@@ -70,7 +70,7 @@ def format_base_prompt(user_prompt):
 
 
 @app.function(
-    gpu=modal.gpu.A100(size="40GB"),
+    gpu="A100-40GB",
     volumes={
         "/model-cache": model_cache,
         "/outputs": outputs_vol,
