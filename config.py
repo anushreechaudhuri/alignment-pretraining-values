@@ -70,13 +70,16 @@ GENERATION_MAX_TOKENS = 1024
 GENERATION_TOP_P = 0.95
 
 # --- Value extraction parameters ---
-# Bulk extraction uses OpenAI (GPT-5.2) and validation uses Anthropic
-# (Claude Opus 4.6). Using different model families for extraction vs.
-# validation provides methodological independence: systematic biases in one
-# provider's value-identification behavior are unlikely to be shared by the
-# other, strengthening our inter-rater reliability checks.
-EXTRACTION_MODEL = "gpt-5.2"
-EXTRACTION_PROVIDER = "openai"
+# Bulk extraction uses two model families in parallel: OpenAI GPT-5.2 and
+# Anthropic Claude Sonnet 4.6. Running extraction through both providers
+# gives us built-in cross-model agreement data at the extraction stage
+# itself (not just during validation), strengthening the methodological
+# independence of downstream analyses. Validation uses a third, more
+# capable model (Claude Opus 4.6) to adjudicate disagreements.
+EXTRACTION_MODELS = {
+    "gpt-5.2": "openai",
+    "claude-sonnet-4-6": "anthropic",
+}
 VALIDATION_EXTRACTION_MODEL = "claude-opus-4-6"
 VALIDATION_EXTRACTION_PROVIDER = "anthropic"
 EXTRACTION_MAX_RETRIES = 3
