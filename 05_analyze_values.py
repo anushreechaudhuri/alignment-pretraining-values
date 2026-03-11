@@ -935,38 +935,64 @@ def main():
             TABLES_DIR / "extractor_agreement_by_category.csv", index=False
         )
 
-    # --- Merge strategy: intersection for primary, union for sensitivity ---
-    df_intersect = apply_extractor_merge(df, strategy="intersection")
-    df_union = apply_extractor_merge(df, strategy="union")
-    print(f"\n  After intersection merge: {len(df_intersect)} value rows")
-    print(f"  After union merge:        {len(df_union)} value rows")
+    # --- Determine analysis strategy based on available extractors ---
+    extractors = df["extraction_model"].unique().tolist()
+    print(f"\n  Available extractors: {extractors}")
+
+    # Check if we have substantial dual-extractor overlap (>1000 shared conversations)
+    # to decide between intersection merge vs single-extractor analysis
+    if len(extractors) >= 2:
+        from itertools import combinations
+        ext_a, ext_b = extractors[0], extractors[1]
+        ids_a = set(df[df["extraction_model"] == ext_a]["prompt_id"].unique())
+        ids_b = set(df[df["extraction_model"] == ext_b]["prompt_id"].unique())
+        overlap = len(ids_a & ids_b)
+        print(f"  Overlap between {ext_a} and {ext_b}: {overlap} conversations")
+
+    if len(extractors) >= 2 and overlap >= 1000:
+        # Substantial dual-extractor overlap: use intersection for primary
+        df_primary = apply_extractor_merge(df, strategy="intersection")
+        df_sensitivity = apply_extractor_merge(df, strategy="union")
+        print(f"  Intersection merge (primary): {len(df_primary)} value rows")
+        print(f"  Union merge (sensitivity):    {len(df_sensitivity)} value rows")
+        merge_label = "intersection"
+    else:
+        # Insufficient overlap or single extractor: use the extractor with most data
+        extractor_counts = df.groupby("extraction_model").size()
+        primary_extractor = extractor_counts.idxmax()
+        df_primary = df[df["extraction_model"] == primary_extractor].copy()
+        df_sensitivity = None
+        print(f"  Using {primary_extractor} as primary ({len(df_primary)} value rows)")
+        if len(extractors) >= 2:
+            print(f"  (Overlap of {overlap} too small for intersection merge; need >=1000)")
+        merge_label = f"single ({primary_extractor})"
 
     # --- Response-length normalization (Issue 2) ---
     lengths_df = load_response_lengths()
-    df_intersect, conv_summary = add_normalized_counts(
-        df_intersect, lengths_df
-    )
+    df_primary, conv_summary = add_normalized_counts(df_primary, lengths_df)
     print_length_value_correlation(conv_summary)
 
-    # --- Core analyses on intersection-merged data ---
-    core_results = run_core_analyses(df_intersect, conv_summary)
+    # --- Core analyses ---
+    print(f"\n  Primary analysis using: {merge_label}")
+    core_results = run_core_analyses(df_primary, conv_summary)
 
-    # --- Sensitivity: repeat on union-merged data ---
-    print("\n" + "=" * 60)
-    print("SENSITIVITY CHECK: Union merge (either extractor)")
-    print("=" * 60)
-    df_union_norm, conv_summary_union = add_normalized_counts(
-        df_union, lengths_df
-    )
-    core_results_union = run_core_analyses(df_union_norm, conv_summary_union)
+    # --- Sensitivity check (only if dual-extractor) ---
+    if df_sensitivity is not None:
+        print("\n" + "=" * 60)
+        print("SENSITIVITY CHECK: Union merge (either extractor)")
+        print("=" * 60)
+        df_sens_norm, conv_summary_sens = add_normalized_counts(
+            df_sensitivity, lengths_df
+        )
+        core_results_union = run_core_analyses(df_sens_norm, conv_summary_sens)
 
-    # --- Breadth analysis on primary (intersection) data ---
-    breadth_df = run_breadth_analysis(df_intersect)
+    # --- Breadth analysis ---
+    breadth_df = run_breadth_analysis(df_primary)
 
-    # --- Visualizations (use intersection data) ---
-    plot_value_distributions(df_intersect)
-    plot_heatmap(df_intersect)
-    plot_cosine_similarity_matrix(df_intersect)
+    # --- Visualizations ---
+    plot_value_distributions(df_primary)
+    plot_heatmap(df_primary)
+    plot_cosine_similarity_matrix(df_primary)
 
     # --- Save tables ---
     save_summary_tables(core_results, breadth_df)
