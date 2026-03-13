@@ -50,3 +50,18 @@ outputs/data/*.jsonl
 models/
 *.bin
 *.safetensors
+
+# Drafts and working documents
+paper/
+drafts/
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.synctex.gz
+
+# Logs
+*.log
+nohup.out
+/tmp/extraction_*.log
