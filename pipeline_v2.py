@@ -394,10 +394,6 @@ def run_stage1(n_prompts: int) -> list[dict]:
     for example in tqdm(ds, desc="Scanning reference dataset"):
         total_seen += 1
 
-        language = example.get("language", "")
-        if language != "English":
-            continue
-
         conversation = example.get("conversation", [])
         if not conversation or len(conversation) < 2:
             continue
@@ -408,7 +404,16 @@ def run_stage1(n_prompts: int) -> list[dict]:
         if first_turn.get("role", "") != "user":
             continue
 
+        # Language field may be at top level OR inside each turn
+        language = example.get("language", "") or first_turn.get("language", "")
+        if language != "English":
+            continue
+
         content = first_turn.get("content", "").strip()
+        # Strip any model-specific tokens that may be prepended
+        for prefix in ["<|begin_of_text|>", "<s>", "<|im_start|>"]:
+            if content.startswith(prefix):
+                content = content[len(prefix):].strip()
         if len(content) < 30:
             continue
 
