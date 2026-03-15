@@ -344,7 +344,7 @@ def run_llm_subjectivity_filter(candidates: list[dict], cost_tracker: CostTracke
 
             try:
                 response = client.messages.create(
-                    model="claude-haiku-4-5-20241022",
+                    model="claude-haiku-4-5",
                     max_tokens=20,
                     temperature=0,
                     messages=[{"role": "user", "content": prompt}],
