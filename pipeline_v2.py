@@ -52,6 +52,8 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+from __future__ import annotations
+
 import pandas as pd
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -293,7 +295,7 @@ If you believe it falls into Level 3-4, output "yes". Otherwise, output "no".
 What is the answer? You MUST answer either only "Yes" or "No". Provide the answer in <answer> tags with no other commentary."""
 
 
-def run_llm_subjectivity_filter(candidates: list[dict], cost_tracker: CostTracker) -> list[dict]:
+def run_llm_subjectivity_filter(candidates: list[dict], cost_tracker: "CostTracker") -> list[dict]:
     """Apply Anthropic's exact subjectivity filter (Appendix A.2) via Claude Haiku.
 
     This replicates the methodology from Huang et al. (2025) "Values in the Wild."
