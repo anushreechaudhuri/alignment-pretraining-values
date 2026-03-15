@@ -402,10 +402,13 @@ def run_stage1(n_prompts: int) -> list[dict]:
     if len(candidates) >= target_candidates:
         log.info("Cache already has enough candidates (%d >= %d)", len(candidates), target_candidates)
     else:
-        log.info("Streaming reference dataset: %s", REFERENCE_DATASET)
-        log.info("Filtering to English, subjective conversations...")
+        # Use ORIGINAL WildChat (allenai/WildChat) for prompt selection because
+        # nyu-dice-lab datasets don't have language labels. We select by
+        # conversation_hash from allenai/WildChat, then match to nyu-dice-lab later.
+        log.info("Streaming allenai/WildChat for English subjective prompts...")
+        log.info("(nyu-dice-lab datasets lack language labels; using original WildChat for selection)")
 
-        ds = load_dataset(REFERENCE_DATASET, split="train", streaming=True)
+        ds = load_dataset("allenai/WildChat", split="train", streaming=True)
 
         existing_hashes = {c["conversation_hash"] for c in candidates}
         total_seen = 0
@@ -424,8 +427,11 @@ def run_stage1(n_prompts: int) -> list[dict]:
                 if first_turn.get("role", "") != "user":
                     continue
 
-                # Language field may be at top level OR inside each turn
-                language = example.get("language", "") or first_turn.get("language", "")
+                # Original WildChat has language at top level
+                language = example.get("language", "")
+                if not language:
+                    # Fallback: check inside turn
+                    language = first_turn.get("language", "")
                 if language != "English":
                     continue
 
@@ -436,7 +442,8 @@ def run_stage1(n_prompts: int) -> list[dict]:
                 if len(content) < 30:
                     continue
 
-                conv_hash = example.get("conversation_hash", "")
+                # Original WildChat uses conversation_id; nyu-dice-lab uses conversation_hash
+                conv_hash = example.get("conversation_hash", "") or example.get("conversation_id", "")
                 if not conv_hash or conv_hash in existing_hashes:
                     continue
 
