@@ -382,62 +382,90 @@ def run_stage1(n_prompts: int) -> list[dict]:
 
     from datasets import load_dataset
 
-    log.info("Streaming reference dataset: %s", REFERENCE_DATASET)
-    log.info("Filtering to English, single-turn, subjective conversations...")
-
-    ds = load_dataset(REFERENCE_DATASET, split="train", streaming=True)
-
+    # Incremental cache for candidates — survives crashes and laptop closures
+    candidates_cache_path = DATA_DIR / "candidates_cache.jsonl"
     candidates = []
-    total_seen = 0
+
+    # Load any previously cached candidates
+    if candidates_cache_path.exists():
+        seen_hashes = set()
+        with open(candidates_cache_path) as f:
+            for line in f:
+                c = json.loads(line.strip())
+                if c["conversation_hash"] not in seen_hashes:
+                    candidates.append(c)
+                    seen_hashes.add(c["conversation_hash"])
+        log.info("Resumed from cache: %d candidates already found", len(candidates))
+
     target_candidates = FULL_SIZE * 10
 
-    for example in tqdm(ds, desc="Scanning reference dataset"):
-        total_seen += 1
+    if len(candidates) >= target_candidates:
+        log.info("Cache already has enough candidates (%d >= %d)", len(candidates), target_candidates)
+    else:
+        log.info("Streaming reference dataset: %s", REFERENCE_DATASET)
+        log.info("Filtering to English, subjective conversations...")
 
-        conversation = example.get("conversation", [])
-        if not conversation or len(conversation) < 2:
-            continue
+        ds = load_dataset(REFERENCE_DATASET, split="train", streaming=True)
 
-        first_turn = conversation[0]
-        if not isinstance(first_turn, dict):
-            continue
-        if first_turn.get("role", "") != "user":
-            continue
+        existing_hashes = {c["conversation_hash"] for c in candidates}
+        total_seen = 0
 
-        # Language field may be at top level OR inside each turn
-        language = example.get("language", "") or first_turn.get("language", "")
-        if language != "English":
-            continue
+        with open(candidates_cache_path, "a") as cache_f:
+            for example in tqdm(ds, desc="Scanning reference dataset"):
+                total_seen += 1
 
-        content = first_turn.get("content", "").strip()
-        # Strip any model-specific tokens that may be prepended
-        for prefix in ["<|begin_of_text|>", "<s>", "<|im_start|>"]:
-            if content.startswith(prefix):
-                content = content[len(prefix):].strip()
-        if len(content) < 30:
-            continue
+                conversation = example.get("conversation", [])
+                if not conversation or len(conversation) < 2:
+                    continue
 
-        conv_hash = example.get("conversation_hash", "")
-        if not conv_hash:
-            continue
+                first_turn = conversation[0]
+                if not isinstance(first_turn, dict):
+                    continue
+                if first_turn.get("role", "") != "user":
+                    continue
 
-        score = score_subjectivity(content)
-        if score < SUBJECTIVITY_THRESHOLD:
-            continue
+                # Language field may be at top level OR inside each turn
+                language = example.get("language", "") or first_turn.get("language", "")
+                if language != "English":
+                    continue
 
-        candidates.append({
-            "conversation_hash": conv_hash,
-            "prompt_text": content[:2000],
-            "subjectivity_score": score,
-        })
+                content = first_turn.get("content", "").strip()
+                for prefix in ["<|begin_of_text|>", "<s>", "<|im_start|>"]:
+                    if content.startswith(prefix):
+                        content = content[len(prefix):].strip()
+                if len(content) < 30:
+                    continue
 
-        if len(candidates) >= target_candidates:
-            break
+                conv_hash = example.get("conversation_hash", "")
+                if not conv_hash or conv_hash in existing_hashes:
+                    continue
 
-    log.info(
-        "Scanned %d conversations, found %d subjective English candidates",
-        total_seen, len(candidates),
-    )
+                score = score_subjectivity(content)
+                if score < SUBJECTIVITY_THRESHOLD:
+                    continue
+
+                candidate = {
+                    "conversation_hash": conv_hash,
+                    "prompt_text": content[:2000],
+                    "subjectivity_score": score,
+                }
+                candidates.append(candidate)
+                existing_hashes.add(conv_hash)
+
+                # Write to cache immediately so progress survives crashes
+                cache_f.write(json.dumps(candidate) + "\n")
+                cache_f.flush()
+
+                if len(candidates) % 100 == 0:
+                    log.info("Found %d candidates so far (scanned %d)", len(candidates), total_seen)
+
+                if len(candidates) >= target_candidates:
+                    break
+
+        log.info(
+            "Scanned %d conversations, found %d subjective English candidates",
+            total_seen, len(candidates),
+        )
 
     rng = np.random.RandomState(RANDOM_SEED)
     indices = rng.permutation(len(candidates))
