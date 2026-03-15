@@ -80,16 +80,16 @@ PILOT_SIZE = 50
 FULL_SIZE = 500
 SUBJECTIVITY_THRESHOLD = 5
 
-REFERENCE_DATASET = "nyu-dice-lab/WildChat-50M-meta-llama_Llama-3.1-8B-Instruct"
+REFERENCE_DATASET = "nyu-dice-lab/allenai_WildChat-1M-Full-meta-llama_Llama-3.1-8B-Instruct"
 
 NYU_DICE_LAB_DATASETS = {
-    "llama-3.1-8b-instruct": "nyu-dice-lab/WildChat-50M-meta-llama_Llama-3.1-8B-Instruct",
-    "llama-3.3-70b-instruct": "nyu-dice-lab/WildChat-50M-meta-llama_Llama-3.3-70B-Instruct",
-    "qwen-2.5-72b-instruct": "nyu-dice-lab/WildChat-50M-Qwen_Qwen2.5-72B-Instruct",
-    "gemma-2-9b-it": "nyu-dice-lab/WildChat-50M-google_gemma-2-9b-it",
-    "gemma-2-27b-it": "nyu-dice-lab/WildChat-50M-google_gemma-2-27b-it",
-    "ministral-8b-instruct-2410": "nyu-dice-lab/WildChat-50M-mistralai_Ministral-8B-Instruct-2410",
-    "llama-2-7b-chat-hf": "nyu-dice-lab/WildChat-50M-meta-llama_Llama-2-7b-chat-hf",
+    "llama-3.1-8b-instruct": "nyu-dice-lab/allenai_WildChat-1M-Full-meta-llama_Llama-3.1-8B-Instruct",
+    "llama-3.3-70b-instruct": "nyu-dice-lab/allenai_WildChat-1M-Full-meta-llama_Llama-3.3-70B-Instruct",
+    "qwen-2.5-72b-instruct": "nyu-dice-lab/allenai_WildChat-1M-Full-Qwen_Qwen2.5-72B-Instruct",
+    "gemma-2-9b-it": "nyu-dice-lab/allenai_WildChat-1M-Full-google_gemma-2-9b-it",
+    "gemma-2-27b-it": "nyu-dice-lab/allenai_WildChat-1M-Full-google_gemma-2-27b-it",
+    "ministral-8b-instruct-2410": "nyu-dice-lab/allenai_WildChat-1M-Full-mistralai_Ministral-8B-Instruct-2410",
+    "llama-2-7b-chat-hf": "nyu-dice-lab/allenai_WildChat-1M-Full-meta-llama_Llama-2-7b-chat-hf",
 }
 
 ORGANIC_MODELS = {
