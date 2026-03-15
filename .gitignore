@@ -54,6 +54,7 @@ models/
 # Drafts and working documents
 paper/
 drafts/
+SCOPE*.md
 *.aux
 *.bbl
 *.blg
