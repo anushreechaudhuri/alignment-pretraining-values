@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 V2 Pipeline: Cross-model value extraction from WildChat conversations.
 
@@ -52,8 +53,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from __future__ import annotations
-
 import pandas as pd
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
