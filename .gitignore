@@ -62,6 +62,12 @@ SCOPE*.md
 *.out
 *.synctex.gz
 
+# Obsolete scripts (superseded by 01c_wildchat_prompts.py)
+01b_generate_value_prompts.py
+
+# Intermediate diagnostic results
+outputs/diagnostics/
+
 # Logs
 *.log
 nohup.out

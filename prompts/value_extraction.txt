@@ -1,3 +1,10 @@
+NOTE: This is the original extraction prompt template from early development.
+The live extraction prompt used by the pipeline is defined in utils/extraction.py,
+which follows Anthropic's exact published methodology more closely.
+This file is kept for reference only.
+
+---
+
 You are analyzing the values expressed by an AI assistant in a conversation. "Values" here means normative considerations that the AI states, demonstrates, or implies in its response -- not the user's values.
 
 Here is the conversation:
