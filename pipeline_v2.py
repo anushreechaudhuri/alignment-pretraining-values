@@ -701,11 +701,20 @@ def _load_existing_responses(model_name: str) -> dict[str, ConversationRecord]:
     return existing
 
 
+def _json_default(obj):
+    """Handle non-serializable types in conversation data (timestamps, etc.)."""
+    if hasattr(obj, 'isoformat'):
+        return obj.isoformat()
+    if isinstance(obj, (set, frozenset)):
+        return list(obj)
+    return str(obj)
+
+
 def _save_response(model_name: str, record: dict):
     """Append a single response record to the model's JSONL file."""
     path = RESPONSES_DIR / f"{model_name}.jsonl"
     with open(path, "a") as f:
-        f.write(json.dumps(record) + "\n")
+        f.write(json.dumps(record, default=_json_default) + "\n")
 
 
 def _gather_nyu_dice_lab(
