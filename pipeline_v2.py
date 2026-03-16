@@ -105,7 +105,7 @@ GEODESIC_MODELS = [
     "geodesic-alignment-dpo",
 ]
 
-EXTRACTION_MODEL = "claude-sonnet-4-6-20250514"
+EXTRACTION_MODEL = "claude-sonnet-4-6"
 EXTRACTION_BUDGET_CAP = 25.0
 
 
