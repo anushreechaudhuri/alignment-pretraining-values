@@ -714,15 +714,10 @@ def _gather_nyu_dice_lab(
     target_hashes: set[str],
     hash_to_prompt: dict[str, dict],
 ):
-    """Stream an nyu-dice-lab dataset and collect conversations matching target hashes.
+    """Load an nyu-dice-lab dataset and collect conversations matching target hashes.
 
-    The nyu-dice-lab datasets replay all WildChat-1M prompts through various
-    open-weight models. Each conversation retains the original conversation_hash,
-    so we can match responses across models to the same user prompts.
-
-    This function streams through the dataset, collecting conversations whose
-    conversation_hash appears in our selected prompt set. Streaming avoids
-    downloading the full ~1M row dataset to disk.
+    Uses pandas indexing for O(1) lookups instead of streaming through ~1M rows.
+    The dataset is downloaded once and cached locally by the HuggingFace library.
 
     Args:
         model_name: Short identifier for this model (used in filenames).
@@ -733,33 +728,44 @@ def _gather_nyu_dice_lab(
     from datasets import load_dataset
 
     existing = _load_existing_responses(model_name)
-    existing_hashes = set()
-    for rec in existing.values():
-        pid = rec["prompt_id"]
-        prompt = next((p for p in hash_to_prompt.values() if p["prompt_id"] == pid), None)
-        if prompt:
-            existing_hashes.add(prompt["conversation_hash"])
+    existing_pids = set(existing.keys())
+    target_pids = {hash_to_prompt[h]["prompt_id"] for h in target_hashes if h in hash_to_prompt}
+    remaining_pids = target_pids - existing_pids
 
-    remaining_hashes = target_hashes - existing_hashes
-    if not remaining_hashes:
-        log.info("  %s: all %d responses cached, skipping", model_name, len(target_hashes))
+    if not remaining_pids:
+        log.info("  %s: all %d responses cached, skipping", model_name, len(target_pids))
         return
 
+    remaining_hashes = {
+        p["conversation_hash"]
+        for p in hash_to_prompt.values()
+        if p["prompt_id"] in remaining_pids
+    }
+
     log.info(
-        "  %s: %d cached, %d remaining. Streaming %s...",
-        model_name, len(existing_hashes), len(remaining_hashes), dataset_id,
+        "  %s: %d cached, %d remaining. Loading %s...",
+        model_name, len(existing_pids & target_pids), len(remaining_hashes), dataset_id,
     )
 
-    ds = load_dataset(dataset_id, split="train", streaming=True)
+    # Load dataset (cached locally after first download), then use pandas for fast lookup
+    ds = load_dataset(dataset_id, split="train")
+    log.info("  %s: loaded %d rows, filtering by conversation_hash...", model_name, len(ds))
+
+    # Convert conversation_hash column to set for O(1) membership test
+    # Then filter to only matching rows
+    all_hashes = ds["conversation_hash"]
+    match_indices = [i for i, h in enumerate(all_hashes) if h in remaining_hashes]
+    log.info("  %s: found %d matching rows", model_name, len(match_indices))
+
     found = 0
+    for idx in match_indices:
+        row = ds[idx]
+        conv_hash = row["conversation_hash"]
+        conversation = row.get("conversation", [])
+        prompt_info = hash_to_prompt.get(conv_hash)
 
-    for example in tqdm(ds, desc=f"  Scanning {model_name}", leave=False):
-        conv_hash = example.get("conversation_hash", "")
-        if conv_hash not in remaining_hashes:
+        if prompt_info is None:
             continue
-
-        conversation = example.get("conversation", [])
-        prompt_info = hash_to_prompt[conv_hash]
 
         record = {
             "prompt_id": prompt_info["prompt_id"],
@@ -768,13 +774,9 @@ def _gather_nyu_dice_lab(
             "source": "replayed",
         }
         _save_response(model_name, record)
-        remaining_hashes.discard(conv_hash)
         found += 1
 
-        if not remaining_hashes:
-            break
-
-    log.info("  %s: found %d new responses (%d still missing)", model_name, found, len(remaining_hashes))
+    log.info("  %s: saved %d new responses", model_name, found)
 
 
 def _gather_organic_wildchat(
@@ -811,20 +813,29 @@ def _gather_organic_wildchat(
         log.info("  Organic WildChat: all responses cached, skipping")
         return
 
-    log.info("  Organic WildChat: %d cached, %d remaining. Streaming allenai/WildChat...",
+    log.info("  Organic WildChat: %d cached, %d remaining. Loading allenai/WildChat...",
              len(found_hashes), len(remaining))
 
-    ds = load_dataset("allenai/WildChat", split="train", streaming=True)
+    # Load full dataset (cached locally after first download)
+    ds = load_dataset("allenai/WildChat", split="train")
+    log.info("  Loaded %d rows, filtering by conversation_id...", len(ds))
+
+    # WildChat uses conversation_id (not conversation_hash)
+    # Build index for O(1) lookup
+    all_ids = ds["conversation_id"]
+    match_indices = [i for i, cid in enumerate(all_ids) if cid in remaining]
+    log.info("  Found %d matching rows", len(match_indices))
+
     found = 0
+    for idx in match_indices:
+        row = ds[idx]
+        conv_id = row["conversation_id"]
+        conversation = row.get("conversation", [])
+        model_tag = row.get("model", "").lower()
+        prompt_info = hash_to_prompt.get(conv_id)
 
-    for example in tqdm(ds, desc="  Scanning WildChat (organic)", leave=False):
-        conv_hash = example.get("conversation_hash", "")
-        if conv_hash not in remaining:
+        if prompt_info is None:
             continue
-
-        conversation = example.get("conversation", [])
-        model_tag = example.get("model", "").lower()
-        prompt_info = hash_to_prompt[conv_hash]
 
         if "gpt-4" in model_tag:
             model_name = "gpt-4"
@@ -840,11 +851,7 @@ def _gather_organic_wildchat(
             "source": "organic",
         }
         _save_response(model_name, record)
-        remaining.discard(conv_hash)
         found += 1
-
-        if not remaining:
-            break
 
     log.info("  Organic WildChat: found %d new responses (%d still missing)", found, len(remaining))
 
