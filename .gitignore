@@ -55,6 +55,7 @@ models/
 paper/
 drafts/
 SCOPE*.md
+INTERIM_REPORT*.md
 *.aux
 *.bbl
 *.blg
@@ -67,6 +68,9 @@ SCOPE*.md
 
 # Intermediate diagnostic results
 outputs/diagnostics/
+
+# Reference papers (downloaded at runtime, too large for git)
+references/
 
 # Logs
 *.log
